@@ -9,6 +9,8 @@ use crate::{VsockAddr, VsockAddrPair, VsockError, VsockTransport, VSOCK_MAX_PKT_
 use alloc::{
     boxed::Box, collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec,
 };
+#[cfg(feature = "async")]
+use async_io::{AsyncRead, AsyncWrite};
 use lazy_static::lazy_static;
 use rust_std_stub::io::{self, Read, Write};
 use spin::{Mutex, Once};
@@ -79,7 +81,7 @@ pub struct VsockStream {
     state: State,
     listen_backlog: u32,
     addr: VsockAddrPair,
-
+    timeout: u64,
     rx_cnt: u32,
 }
 
@@ -105,8 +107,56 @@ impl Write for VsockStream {
     }
 }
 
+#[cfg(feature = "async")]
+impl AsyncRead for VsockStream {
+    fn poll_read(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> core::task::Poll<io::Result<usize>> {
+        match self.get_mut().recv(buf, 0) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VsockError::DataNotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl AsyncWrite for VsockStream {
+    fn poll_write(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &[u8],
+    ) -> core::task::Poll<io::Result<usize>> {
+        match self.get_mut().send(buf, 0) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VsockError::DataNotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        }
+    }
+
+    fn poll_close(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<io::Result<()>> {
+        core::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_flush(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<io::Result<()>> {
+        core::task::Poll::Ready(Ok(()))
+    }
+}
+
 impl VsockStream {
-    pub fn new() -> Result<Self> {
+    pub fn new(block: bool) -> Result<Self> {
         Ok(VsockStream {
             state: State::default(),
             listen_backlog: 0,
@@ -117,6 +167,7 @@ impl VsockStream {
                 },
                 remote: VsockAddr::default(),
             },
+            timeout: if block { DEFAULT_TIMEOUT } else { 0 },
             rx_cnt: 0,
         })
     }
@@ -144,7 +195,7 @@ impl VsockStream {
         }
     }
 
-    pub fn accept(&self) -> Result<VsockStream> {
+    pub fn accept(&self, block: bool) -> Result<VsockStream> {
         if self.state != State::Listening {
             return Err(VsockError::Illegal);
         }
@@ -154,7 +205,7 @@ impl VsockStream {
             .get_mut()
             .unwrap()
             .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+            .dequeue(self, self.timeout)?;
 
         let packet = Packet::new_checked(recv.as_slice())?;
         if packet.op() != field::OP_REQUEST {
@@ -181,7 +232,7 @@ impl VsockStream {
             self,
             packet.as_ref(),
             &[],
-            DEFAULT_TIMEOUT,
+            self.timeout,
         )?;
 
         let peer_addr = VsockAddr::new(request.src_cid() as u32, request.src_port());
@@ -194,6 +245,7 @@ impl VsockStream {
                 remote: peer_addr,
             },
             rx_cnt: 0,
+            timeout: if block { DEFAULT_TIMEOUT } else { 0 },
         };
 
         add_stream_to_connection_map(&new_stream);
@@ -226,7 +278,7 @@ impl VsockStream {
             self,
             packet.as_ref(),
             &[],
-            DEFAULT_TIMEOUT,
+            self.timeout,
         )?;
 
         self.state = State::RequestSend;
@@ -235,7 +287,7 @@ impl VsockStream {
             .get_mut()
             .unwrap()
             .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+            .dequeue(self, self.timeout)?;
 
         let packet = Packet::new_checked(recv.as_slice())?;
 
@@ -275,7 +327,7 @@ impl VsockStream {
                 self,
                 packet.as_ref(),
                 &[],
-                DEFAULT_TIMEOUT,
+                self.timeout,
             )?;
 
             self.state = State::Closing;
@@ -306,7 +358,7 @@ impl VsockStream {
             self,
             packet.as_ref(),
             buf,
-            DEFAULT_TIMEOUT,
+            self.timeout,
         )?;
 
         Ok(buf.len())
@@ -323,7 +375,7 @@ impl VsockStream {
             .get_mut()
             .unwrap()
             .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+            .dequeue(self, self.timeout)?;
         let packet = Packet::new_checked(recv.as_slice())?;
 
         if packet.op() == field::OP_SHUTDOWN {
@@ -344,7 +396,7 @@ impl VsockStream {
                 .get_mut()
                 .unwrap()
                 .transport
-                .dequeue(self, DEFAULT_TIMEOUT)?;
+                .dequeue(self, self.timeout)?;
             self.rx_cnt += packet.data_len();
             buf[..packet.data_len() as usize].copy_from_slice(&recv[..packet.data_len() as usize]);
         }
@@ -359,7 +411,7 @@ impl VsockStream {
                 .get_mut()
                 .unwrap()
                 .transport
-                .dequeue(self, DEFAULT_TIMEOUT)?;
+                .dequeue(self, self.timeout)?;
             let packet = Packet::new_checked(recv.as_slice())?;
             if packet.op() == field::OP_RST {
                 let mut buf = [0; HEADER_LEN];
@@ -379,7 +431,7 @@ impl VsockStream {
                     self,
                     packet.as_ref(),
                     &[],
-                    DEFAULT_TIMEOUT,
+                    self.timeout,
                 )?;
                 self.state = State::Closed;
 
