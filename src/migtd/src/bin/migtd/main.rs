@@ -7,14 +7,20 @@
 
 extern crate alloc;
 
-use migtd::migration::{session::MigrationSession, MigrationResult};
+use core::future::poll_fn;
+
+use migtd::migration::{session::*, MigrationResult};
 use migtd::{config, event_log, migration};
+use td_payload::arch::apic::{enable_and_hlt, disable};
 use td_payload::println;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
+
+#[cfg(feature = "async")]
+const MAX_CONCURRENCY_REQUESTS: u8 = 10;
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -39,6 +45,12 @@ pub fn runtime_main() {
 
     // Get root certificate from CFV and measure it into RMTR
     get_ca_and_measure(event_log);
+
+    migration::event::register_callback();
+    // Query the capability of VMM
+    if query().is_err() {
+        panic!("Migration is not supported by VMM");
+    }
 
     // Handle the migration request from VMM
     handle_pre_mig();
@@ -68,31 +80,38 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
 }
 
 fn handle_pre_mig() {
-    migration::event::register_callback();
-    // Query the capability of VMM
-    if MigrationSession::query().is_err() {
-        panic!("Migration is not supported by VMM");
+    #[cfg(feature = "async")]
+    for _ in 0..MAX_CONCURRENCY_REQUESTS {
+        async_runtime::add_task(handle_pre_mig_async());
     }
+
     // Loop to wait for request
     println!("Loop to wait for request");
+
     loop {
-        let mut session = MigrationSession::new();
-        if session.wait_for_request().is_ok() {
+        #[cfg(feature = "async")]
+        async_runtime::poll_tasks();
+        #[cfg(feature = "async")]
+        handle_pre_mig_sync();
+        sleep();
+    }
+}
+
+fn handle_pre_mig_sync() {
+    loop {
+        if let Ok(info) = wait_for_request_block() {
             #[cfg(feature = "vmcall-vsock")]
             {
-                // Safe to unwrap because we have got the request information
-                let info = session.info().unwrap();
                 migtd::driver::vsock::vmcall_vsock_device_init(
                     info.mig_info.mig_request_id,
                     info.mig_socket_info.mig_td_cid,
                 );
             }
 
-            let status = session
-                .op()
+            let status = trans_msk(&info)
                 .map(|_| MigrationResult::Success)
                 .unwrap_or_else(|e| e);
-            let _ = session.report_status(status as u8);
+            let _ = report_status(&info, status as u8);
             #[cfg(all(feature = "coverage", feature = "tdx"))]
             {
                 const MAX_COVERAGE_DATA_PAGE_COUNT: usize = 0x200;
@@ -114,6 +133,29 @@ fn handle_pre_mig() {
             test_memory()
         };
     }
+}
+
+async fn handle_pre_mig_async() {
+    if let Ok(info) = poll_fn(|_cx| wait_for_request_nonblock()).await {
+        #[cfg(feature = "vmcall-vsock")]
+        {
+            migtd::driver::vsock::vmcall_vsock_device_init(
+                info.mig_info.mig_request_id,
+                info.mig_socket_info.mig_td_cid,
+            );
+        }
+
+        let status = trans_msk_async(&info)
+            .await
+            .map(|_| MigrationResult::Success)
+            .unwrap_or_else(|e| e);
+        let _ = report_status(&info, status as u8);
+    }
+}
+
+fn sleep() {
+    enable_and_hlt();
+    disable();
 }
 
 #[cfg(test)]
