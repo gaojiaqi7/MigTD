@@ -69,6 +69,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b13c32d80ecc7ab747b80c3784bce54ee8a7a0cc4fbda9bf4cda2cf6fe90854"
 
 [[package]]
+name = "async_io"
+version = "0.1.0"
+dependencies = [
+ "rust_std_stub",
+]
+
+[[package]]
+name = "async_runtime"
+version = "0.1.0"
+dependencies = [
+ "futures-task",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "async_rustls"
+version = "0.1.0"
+dependencies = [
+ "async_io",
+ "rust_std_stub",
+ "rustls",
+]
+
+[[package]]
 name = "atomic_refcell"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -344,6 +368,12 @@ dependencies = [
  "cc",
  "libc",
 ]
+
+[[package]]
+name = "futures-task"
+version = "0.3.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76d3d132be6c0e6aa1534069c705a74a5997a356c0dc2f86a47765e5617c5b65"
 
 [[package]]
 name = "generic-array"
