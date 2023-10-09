@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{string::ToString, vec::Vec};
+use async_io::{AsyncRead, AsyncWrite};
 use rust_std_stub::io::{Read, Write};
 use tdx_tdcall::TdCallError;
 
@@ -10,6 +11,7 @@ use crate::{event_log::get_event_log, mig_policy};
 use crypto::{
     ecdsa::{ecdsa_verify, EcdsaPk},
     hash::digest_sha384,
+    rustls_impl::async_tls::SecureChannelAsync,
     tls::{SecureChannel, TlsConfig},
     x509::{
         AlgorithmIdentifier, Any, BitString, Certificate, CertificateBuilder, Decodable, DerError,
@@ -77,6 +79,26 @@ pub const MUTUAL_ATTESTATION_ERROR: &str = "MutualAttestationError";
 pub const MISMATCH_PUBLIC_KEY: &str = "MismatchPublicKeyError";
 
 const PUBLIC_KEY_HASH_SIZE: usize = 48;
+
+#[cfg(feature = "async")]
+pub fn async_server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannelAsync<T>> {
+    let mut signing_key = EcdsaPk::new()?;
+    let certs = vec![gen_cert(&mut signing_key)?];
+
+    // Server verifies certificate of client
+    let config = TlsConfig::new(certs, signing_key, verify_client_cert)?;
+    config.async_tls_client(stream).map_err(|e| e.into())
+}
+
+#[cfg(feature = "async")]
+pub fn async_client<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannelAsync<T>> {
+    let mut signing_key = EcdsaPk::new()?;
+    let certs = vec![gen_cert(&mut signing_key)?];
+
+    // Client verifies certificate of server
+    let config = TlsConfig::new(certs, signing_key, verify_server_cert)?;
+    config.async_tls_client(stream).map_err(|e| e.into())
+}
 
 pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     let mut signing_key = EcdsaPk::new()?;

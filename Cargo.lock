@@ -265,6 +265,8 @@ dependencies = [
 name = "crypto"
 version = "0.1.0"
 dependencies = [
+ "async_io",
+ "async_rustls",
  "cfg-if",
  "der 0.5.1",
  "ring",
@@ -558,6 +560,8 @@ name = "migtd"
 version = "0.3.1"
 dependencies = [
  "anyhow",
+ "async_io",
+ "async_runtime",
  "attestation",
  "bitfield",
  "cc-measurement",
