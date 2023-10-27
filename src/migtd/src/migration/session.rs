@@ -7,6 +7,8 @@ use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 use core::mem::size_of;
 #[cfg(feature = "async")]
+use core::time::Duration;
+#[cfg(feature = "async")]
 use lazy_static::lazy_static;
 use scroll::Pread;
 #[cfg(feature = "async")]
@@ -19,11 +21,15 @@ use zerocopy::AsBytes;
 type Result<T> = core::result::Result<T, MigrationResult>;
 
 use super::{data::*, *};
+#[cfg(feature = "async")]
+use crate::driver::ticks::with_timeout;
 use crate::ratls;
 
 const TDCS_FIELD_MIG_DEC_KEY: u64 = 0x9810_0003_0000_0010;
 const TDCS_FIELD_MIG_ENC_KEY: u64 = 0x9810_0003_0000_0018;
 const MSK_SIZE: usize = 32;
+#[cfg(feature = "async")]
+const TLS_TIMEOUT: Duration = Duration::from_secs(10); // 10 seconds
 
 #[cfg(feature = "async")]
 lazy_static! {
@@ -363,9 +369,9 @@ pub async fn trans_msk_async(info: &MigrationInformation) -> Result<()> {
             ratls::async_client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
         // MigTD-S send Migration Session Forward key to peer
-        ratls_client.start().await?;
-        ratls_client.write(msk.as_bytes()).await?;
-        let size = ratls_client.read(msk_peer.as_bytes_mut()).await?;
+        with_timeout(TLS_TIMEOUT, ratls_client.start()).await??;
+        with_timeout(TLS_TIMEOUT, ratls_client.write(msk.as_bytes())).await??;
+        let size = with_timeout(TLS_TIMEOUT, ratls_client.read(msk_peer.as_bytes_mut())).await??;
         if size < MSK_SIZE {
             return Err(MigrationResult::NetworkError);
         }
@@ -374,9 +380,9 @@ pub async fn trans_msk_async(info: &MigrationInformation) -> Result<()> {
         let mut ratls_server =
             ratls::async_server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-        ratls_server.start().await?;
-        ratls_server.write(msk.as_bytes()).await?;
-        let size = ratls_server.read(msk_peer.as_bytes_mut()).await?;
+        with_timeout(TLS_TIMEOUT, ratls_server.start()).await??;
+        with_timeout(TLS_TIMEOUT, ratls_server.write(msk.as_bytes())).await??;
+        let size = with_timeout(TLS_TIMEOUT, ratls_server.read(msk_peer.as_bytes_mut())).await??;
         if size < MSK_SIZE {
             return Err(MigrationResult::NetworkError);
         }
