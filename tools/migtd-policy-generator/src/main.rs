@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use async_std::task::block_on;
 use clap::Parser;
 use migtd_policy_generator::policy::generate_policy;
 use std::{fs, path::PathBuf, process::exit};
@@ -20,7 +21,7 @@ struct Config {
 fn main() {
     let config = Config::parse();
 
-    let policy = generate_policy(!config.pre_production).unwrap_or_else(|e| {
+    let policy = block_on(generate_policy(!config.pre_production)).unwrap_or_else(|e| {
         eprintln!("Failed to generate policy: {}", e);
         exit(1);
     });
@@ -29,3 +30,9 @@ fn main() {
         exit(1);
     })
 }
+
+// async fn main() {
+//     let uri = "https://api.trustedservices.intel.com/tdx/certification/v4/tcb?fmspc=80C06F000000";
+//     let string: String = surf::get(uri).recv_string().await.unwrap();
+//     println!("{}", string);
+// }

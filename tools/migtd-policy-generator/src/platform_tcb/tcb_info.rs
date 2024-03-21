@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
 use crate::fetch_data_from_url;
@@ -10,30 +10,31 @@ use crate::fetch_data_from_url;
 const TCB_INFO_URL: &str = "https://api.trustedservices.intel.com/tdx/certification/v4/tcb";
 const SBX_TCB_INFO_URL: &str = "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/tcb";
 
-pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<PlatformTcb>> {
+pub async fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<PlatformTcb>> {
     let tcb_info_url = if for_production {
         TCB_INFO_URL
     } else {
         SBX_TCB_INFO_URL
     };
     let url = format!("{}?fmspc={}", tcb_info_url, fmspc);
-    let (response_code, data) = fetch_data_from_url(&url)?;
-
-    let result = if response_code == 200 {
-        println!("Got TCB info of fmspc - {}", fmspc,);
-        Some(serde_json::from_slice::<PlatformTcb>(&data)?)
-    } else if response_code == 404 {
-        // Ignore 404 errors
-        None
-    } else {
-        eprintln!(
-            "Error fetching details for fmspc {}: {:?}",
-            fmspc, response_code
-        );
-        None
-    };
-
-    Ok(result)
+    match fetch_data_from_url(&url).await {
+        Ok(data) => {
+            println!("Got TCB info of fmspc - {}", fmspc,);
+            Ok(Some(serde_json::from_slice::<PlatformTcb>(&data)?))
+        }
+        Err(response_code) => {
+            if response_code == 404 {
+                // Ignore 404 errors
+                Ok(None)
+            } else {
+                eprintln!(
+                    "Error fetching details for fmspc {}: {:?}",
+                    fmspc, response_code
+                );
+                Err(anyhow!("FetchTcbInfo"))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

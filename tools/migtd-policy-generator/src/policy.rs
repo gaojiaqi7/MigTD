@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
+use futures::try_join;
 use serde::Serialize;
 use serde_json::json;
 
@@ -16,9 +17,11 @@ use crate::{
 const PRODUCTION_POLICY_GUID: &str = "F65CD566-4D67-45EF-88E3-79963901B292";
 const PRE_PRODUCTION_POLICY_GUID: &str = "B87BFE45-9CC7-46F9-8F2C-A6CB55BF7101";
 
-pub fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
-    let platform_tcb = get_platform_info(for_production)?;
-    let qe_identity = get_qe_identity(for_production)?;
+pub async fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
+    let (platform_tcb, qe_identity) = try_join!(
+        get_platform_info(for_production),
+        get_qe_identity(for_production)
+    )?;
     let migtd = MigTdInfoPolicy::default();
     let tdx_module = TdxModulePolicy::new(for_production);
 

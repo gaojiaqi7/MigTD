@@ -11,17 +11,16 @@ const FMSPC_LIST_URL: &str = "https://api.trustedservices.intel.com/sgx/certific
 const SBX_FMSPC_LIST_URL: &str =
     "https://sbx.api.trustedservices.intel.com/sgx/certification/v4/fmspcs";
 
-pub fn fetch_fmspc_list(for_production: bool) -> Result<Vec<Fmspc>> {
+pub async fn fetch_fmspc_list(for_production: bool) -> Result<Vec<Fmspc>> {
     let fmspc_list_url = if for_production {
         FMSPC_LIST_URL
     } else {
         SBX_FMSPC_LIST_URL
     };
 
-    let (response_code, data) = fetch_data_from_url(fmspc_list_url)?;
-    match response_code {
-        200 => Ok(serde_json::from_slice::<Vec<Fmspc>>(&data)?),
-        _ => {
+    match fetch_data_from_url(fmspc_list_url).await {
+        Ok(data) => Ok(serde_json::from_slice::<Vec<Fmspc>>(&data)?),
+        Err(response_code) => {
             eprintln!("Error fetching fmspc list - {:?}", response_code);
             Err(anyhow!("AccessException"))
         }

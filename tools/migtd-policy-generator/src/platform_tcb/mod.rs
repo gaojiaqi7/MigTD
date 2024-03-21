@@ -11,12 +11,13 @@ use tcb_info::fetch_platform_tcb;
 pub mod fmspc;
 pub mod tcb_info;
 
-pub fn get_platform_info(for_production: bool) -> Result<Vec<PlatformPolicy>> {
-    match fetch_fmspc_list(for_production) {
+pub async fn get_platform_info(for_production: bool) -> Result<Vec<PlatformPolicy>> {
+    match fetch_fmspc_list(for_production).await {
         Ok(list) => {
             let mut platforms = Vec::new();
             for platform in get_all_e5_platform(&list) {
-                if let Ok(platform_tcb) = fetch_platform_tcb(for_production, &platform.fmspc) {
+                if let Ok(platform_tcb) = fetch_platform_tcb(for_production, &platform.fmspc).await
+                {
                     if let Some(platform_tcb) = platform_tcb {
                         let platform = PlatformPolicy::new(&platform_tcb);
                         platforms.push(platform);
