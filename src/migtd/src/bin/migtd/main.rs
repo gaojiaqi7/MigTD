@@ -16,6 +16,7 @@ use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
 use spin::Mutex;
+use tdx_tdcall::tdreport::tdcall_report;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -41,6 +42,10 @@ pub fn runtime_main() {
 
     // Measure the input data
     do_measurements();
+
+    // Dump the final TDX report
+    let report = tdcall_report(&[0u8; 64]).expect("Failed to get TDX report");
+    info!("TDX Report: {:?}", report);
 
     migration::event::register_callback();
     // Query the capability of VMM
