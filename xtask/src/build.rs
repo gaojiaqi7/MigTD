@@ -29,6 +29,10 @@ lazy_static! {
     static ref DEFAULT_SHIM_LAYOUT: PathBuf = PROJECT_ROOT.join("config/shim_layout.json");
     static ref DEFAULT_IMAGE_LAYOUT: PathBuf = PROJECT_ROOT.join("config/image_layout.json");
     static ref DEFAULT_SERVTD_INFO: PathBuf = PROJECT_ROOT.join("config/servtd_info.json");
+    // static ref DEFAULT_POLICY_V2: PathBuf = PROJECT_ROOT.join("config/policy_v2.json");
+    // static ref DEFAULT_POLICY_PUBKEY: PathBuf = PROJECT_ROOT.join("config/policy_public_key.pem");
+    // static ref DEFAULT_ENGINE_PUBKEY: PathBuf = PROJECT_ROOT.join("config/engine_public_key.pem");
+    // static ref DEFAULT_ENGINE_SVN: PathBuf = PROJECT_ROOT.join("config/svn.json");
     static ref MMIO_LAYOUT_SOURCE: PathBuf = PROJECT_ROOT.join("src/devices/pci/src/layout.rs");
 }
 
@@ -57,6 +61,18 @@ pub(crate) struct BuildArgs {
     /// Path of MigTD policy file
     #[clap(long)]
     policy: Option<PathBuf>,
+    /// Path of engine-svn mapping file, for policy v2
+    #[clap(long)]
+    engine: Option<PathBuf>,
+    /// Path of policy public key, for policy v2
+    #[clap(long)]
+    policy_pubkey: Option<PathBuf>,
+    /// Path of engine public key, for policy v2
+    #[clap(long)]
+    engine_pubkey: Option<PathBuf>,
+    /// Path of migtd collaterals, for policy v2
+    #[clap(long)]
+    collaterals: Option<PathBuf>,
     /// Path of the output MigTD image
     #[clap(short, long)]
     output: Option<PathBuf>,
@@ -224,21 +240,51 @@ impl BuildArgs {
         sh.set_var("AR", "llvm-ar");
 
         sh.change_dir(SHIM_FOLDER.as_path());
-        cmd!(
+        let mut cmd = cmd!(
             sh,
             "cargo run -p td-shim-tools --bin td-shim-enroll --features=enroller"
         )
-        .args(&[bin])
-        .args(&[
+        .arg(bin)
+        .args(&["-o", bin.to_str().unwrap()]);
+
+        cmd = cmd.args(&[
             "-f",
             "0BE92DC3-6221-4C98-87C1-8EEFFD70DE5A",
             self.policy()?.to_str().unwrap(),
             "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
             self.root_ca()?.to_str().unwrap(),
-        ])
-        .args(&["-o", bin.to_str().unwrap()])
-        .run()?;
+        ]);
 
+        if let Some(engine) = &self.engine {
+            let path = fs::canonicalize(engine)?;
+            cmd = cmd.args(&[
+                "B1A29D14-2D12-4307-9C10-A47960838A85",
+                path.to_str().unwrap(),
+            ]);
+        }
+        if let Some(policy_pubkey) = &self.policy_pubkey {
+            let path = fs::canonicalize(policy_pubkey)?;
+            cmd = cmd.args(&[
+                "B3C1DCFE-6BEF-449F-A183-63A84EA1E0B4",
+                path.to_str().unwrap(),
+            ]);
+        }
+        if let Some(engine_pubkey) = &self.engine_pubkey {
+            let path = fs::canonicalize(engine_pubkey)?;
+            cmd = cmd.args(&[
+                "EDFD2B6D-7FA9-455B-9EA1-4CA0B9EC01A8",
+                path.to_str().unwrap(),
+            ]);
+        }
+        if let Some(collaterals) = &self.collaterals {
+            let path = fs::canonicalize(collaterals)?;
+            cmd = cmd.args(&[
+                "A55107C8-5599-48F3-A2AD-8D2ECA13CD03",
+                path.to_str().unwrap(),
+            ]);
+        }
+
+        cmd.run()?;
         Ok(())
     }
 
@@ -313,6 +359,21 @@ impl BuildArgs {
         let path = self.policy.as_ref().unwrap_or(&DEFAULT_POLICY);
         fs::canonicalize(path).map_err(|e| e.into())
     }
+
+    // fn engine(&self) -> Result<PathBuf> {
+    //     let path = self.policy.as_ref().unwrap_or(&DEFAULT_POLICY);
+    //     fs::canonicalize(path).map_err(|e| e.into())
+    // }
+
+    // fn policy_pubkey(&self) -> Result<PathBuf> {
+    //     let path = self.policy.as_ref().unwrap_or(&DEFAULT_POLICY);
+    //     fs::canonicalize(path).map_err(|e| e.into())
+    // }
+
+    // fn engine_pubkey(&self) -> Result<PathBuf> {
+    //     let path = self.policy.as_ref().unwrap_or(&DEFAULT_POLICY);
+    //     fs::canonicalize(path).map_err(|e| e.into())
+    // }
 
     fn root_ca(&self) -> Result<PathBuf> {
         let path = self.root_ca.as_ref().unwrap_or(&DEFAULT_CA);

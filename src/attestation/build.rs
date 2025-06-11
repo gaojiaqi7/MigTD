@@ -38,17 +38,14 @@ fn main() {
         "failed to build servtd_attest_preparation: {status}"
     );
 
-    // make servtd_attest
-    let status = Command::new("make")
-        .args(["-C", &lib_path, "servtd_attest"])
-        .status()
-        .expect("failed to run make servtd_attest for attestation library!");
-    assert!(status.success(), "failed to build servtd_attest: {status}");
+    // // make servtd_attest
+    // let status = Command::new("make")
+    //     .args(["-C", &lib_path, "servtd_attest"])
+    //     .status()
+    //     .expect("failed to run make servtd_attest for attestation library!");
+    // assert!(status.success(), "failed to build servtd_attest: {status}");
 
-    let search_dir = format!(
-        "{}/external/dcap_source/QuoteGeneration/quote_wrapper/servtd_attest/linux",
-        &lib_path
-    );
+    let search_dir = format!("{}", crate_path.to_str().unwrap());
 
     println!("cargo:rustc-link-search=native={}", search_dir);
     println!("cargo:rustc-link-lib=static=servtd_attest");
