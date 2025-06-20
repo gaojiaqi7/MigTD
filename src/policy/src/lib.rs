@@ -42,11 +42,15 @@ pub enum PolicyError {
     SignatureVerificationFailed,
     InvalidCollateral,
     InvalidOperation,
+    InvalidReference,
+    InvalidEngineSvnMap,
     InvalidQuote,
     SvnMismatch,
+    TcbEvaluation,
+    HashCalculation,
 }
 
-struct Report<'a> {
+pub struct Report<'a> {
     platform_info: BTreeMap<PlatformInfoProperty, &'a [u8]>,
     qe_info: BTreeMap<QeInfoProperty, &'a [u8]>,
     tdx_module_info: BTreeMap<TdxModuleInfoProperty, &'a [u8]>,
@@ -302,6 +306,8 @@ enum EventName {
     MigTdCoreSvn,
     MigTdPolicy,
     SgxRootKey,
+    MigTdEngine,
+    Collaterals,
     Unknown,
 }
 
@@ -364,7 +370,16 @@ pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEve
     Some(map)
 }
 
-pub(crate) fn replay_event_log(event_log: &[u8], report_peer: &Report) -> Result<(), PolicyError> {
+pub fn verify_event_log<'a>(event_log: &[u8], report: &'a [u8]) -> Result<Report<'a>, PolicyError> {
+    let report_values = Report::new(report).map_err(|_| PolicyError::InvalidParameter)?;
+    replay_event_log_with_report_values(event_log, &report_values)?;
+    Ok(report_values)
+}
+
+pub(crate) fn replay_event_log_with_report_values(
+    event_log: &[u8],
+    report: &Report,
+) -> Result<(), PolicyError> {
     let mut rtmrs: [[u8; 96]; 4] = [[0; 96]; 4];
 
     let event_log = if let Some(event_log) = CcEventLogReader::new(event_log) {
@@ -392,10 +407,10 @@ pub(crate) fn replay_event_log(event_log: &[u8], report_peer: &Report) -> Result
         }
     }
 
-    if report_peer.get_migtd_info_property(&MigTdInfoProperty::Rtmr0)? == &rtmrs[0][0..48]
-        && report_peer.get_migtd_info_property(&MigTdInfoProperty::Rtmr1)? == &rtmrs[1][0..48]
-        && report_peer.get_migtd_info_property(&MigTdInfoProperty::Rtmr2)? == &rtmrs[2][0..48]
-        && report_peer.get_migtd_info_property(&MigTdInfoProperty::Rtmr3)? == &rtmrs[3][0..48]
+    if report.get_migtd_info_property(&MigTdInfoProperty::Rtmr0)? == &rtmrs[0][0..48]
+        && report.get_migtd_info_property(&MigTdInfoProperty::Rtmr1)? == &rtmrs[1][0..48]
+        && report.get_migtd_info_property(&MigTdInfoProperty::Rtmr2)? == &rtmrs[2][0..48]
+        && report.get_migtd_info_property(&MigTdInfoProperty::Rtmr3)? == &rtmrs[3][0..48]
     {
         Ok(())
     } else {

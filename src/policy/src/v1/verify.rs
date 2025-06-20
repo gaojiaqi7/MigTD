@@ -9,8 +9,9 @@ use super::{
     format_bytes_hex, MigTdInfo, PlatformInfo, Policy, QeInfo,
 };
 use crate::{
-    parse_events, replay_event_log, CcEvent, EventName, MigTdInfoProperty, PlatformInfoProperty,
-    PolicyError, QeInfoProperty, Report, TdxModuleInfoProperty, REPORT_DATA_SIZE,
+    parse_events, replay_event_log_with_report_values, CcEvent, EventName, MigTdInfoProperty,
+    PlatformInfoProperty, PolicyError, QeInfoProperty, Report, TdxModuleInfoProperty,
+    REPORT_DATA_SIZE,
 };
 
 // Attributes Mask:
@@ -300,7 +301,7 @@ fn verify_event_log(
     event_log_peer: &[u8],
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    replay_event_log(event_log_peer, peer_report)?;
+    replay_event_log_with_report_values(event_log_peer, peer_report)?;
 
     if let (Some(log_local), Some(log_peer)) =
         (parse_events(event_log_local), parse_events(event_log_peer))

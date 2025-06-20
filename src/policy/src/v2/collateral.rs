@@ -8,7 +8,19 @@ use alloc::{string::String, vec::Vec};
 use crypto::x509::{self, AnyRef, Decode, DerResult, ObjectIdentifier, OctetStringRef, Reader};
 use serde::Deserialize;
 
-use crate::PolicyError;
+use crate::{parse_events, v2::verify_event_hash, EventName, PolicyError};
+
+pub fn verify_collateral_integrity(
+    collaterals: &[u8],
+    event_log: &[u8],
+) -> Result<(), PolicyError> {
+    let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
+
+    if !verify_event_hash(&events, &EventName::Collaterals, &collaterals)? {
+        return Err(PolicyError::InvalidCollateral);
+    }
+    Ok(())
+}
 
 pub fn get_fmspc_from_quote(quote: &[u8]) -> Result<[u8; 6], PolicyError> {
     const PEM_CERT_BEGIN: &str = "-----BEGIN CERTIFICATE-----\n";

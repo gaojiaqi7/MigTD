@@ -461,7 +461,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     if info.is_src() {
         // TLS client
         let mut ratls_client =
-            ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+            ratls::client(transport, &info).map_err(|_| MigrationResult::SecureSessionError)?;
 
         // MigTD-S send Migration Session Forward key to peer
         with_timeout(
@@ -486,6 +486,9 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             .shutdown()
             .await
             .map_err(|_e| MigrationResult::InvalidParameter)?;
+
+        // Remove the init migtd config of the migrated TD
+        let _ = remove_init_migtd_config(&info.mig_info);
     } else {
         // TLS server
         let mut ratls_server =
@@ -501,6 +504,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             ratls_server.read(remote_information.as_bytes_mut()),
         )
         .await??;
+
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
@@ -513,6 +517,14 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             .shutdown()
             .await
             .map_err(|_e| MigrationResult::InvalidParameter)?;
+
+        // Store the init migtd config of the target TD
+        parse_and_store_init_migtd_config(
+            &info.mig_info,
+            &ratls_server
+                .peer_certificates_bytes()
+                .ok_or(MigrationResult::InvalidParameter)?,
+        )?;
     }
 
     let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;

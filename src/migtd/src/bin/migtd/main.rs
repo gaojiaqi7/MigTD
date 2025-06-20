@@ -73,11 +73,19 @@ pub fn runtime_main() {
     let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64]).expect("Failed to get TD report");
     let quote = attestation::get_quote(report.as_bytes()).expect("Failed to get quote");
 
-    let collaterals = config::get_collaterals().expect("Collaterals not found");
-    let fmspc = get_fmspc_from_quote(&quote).unwrap();
-    let collateral = policy::v2::collateral::get_collateral_with_fmspc(&fmspc, &collaterals)
-        .expect("Failed to get collateral with FMSPC");
-    let verify = attestation::verify_quote_with_collaterals(&quote, &collateral).unwrap();
+    // let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64]).expect("Failed to get TD report");
+    // let quote = attestation::get_quote(report.as_bytes()).expect("Failed to get quote");
+
+    log::info!("get quote done\n");
+
+    log::info!("quote header: {:x?}\n", &quote[..48]);
+    log::info!("quote report size type: {:x?}\n", &quote[48..54]);
+    log::info!("quote report: {:x?}\n", &quote[54..702]);
+    // let collaterals = config::get_collaterals().expect("Collaterals not found");
+    // let fmspc = get_fmspc_from_quote(&quote).unwrap();
+    // let collateral = policy::v2::collateral::get_collateral_with_fmspc(&fmspc, &collaterals)
+    //     .expect("Failed to get collateral with FMSPC");
+    // let verify = attestation::verify_quote_with_collaterals(&quote, &collateral).unwrap();
 }
 
 fn basic_info() {
