@@ -19,10 +19,10 @@ popd
 
 - Generate migtd collaterals for production platforms:
   ```
-  ./target/debug/migtd-collateral-generator -o config/collateral_production_fmspc.bin
+  ./target/debug/migtd-collateral-generator -o config/collateral_production_fmspc.json
   ```
 
 - Generate migtd collaterals for pre-production platforms:
   ```
-  ./target/debug/migtd-collateral-generator -o config/collateral_pre_production_fmspc.bin --pre-production
+  ./target/debug/migtd-collateral-generator -o config/collateral_pre_production_fmspc.json --pre-production
   ```

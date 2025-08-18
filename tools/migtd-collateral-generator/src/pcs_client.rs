@@ -56,7 +56,10 @@ pub fn fetch_pck_crl(for_production: bool) -> Result<(Vec<u8>, String)> {
                 .header_map
                 .remove(PCK_CRL_ISSUER_CHAIN)
                 .ok_or_else(|| anyhow!("Missing PCK CRL issuer chain header"))?;
-            Ok((pcs_response.data, issuer_chain))
+            Ok((
+                pcs_response.data,
+                percent_decode_str(&issuer_chain).decode_utf8()?.to_string(),
+            ))
         }
         _ => {
             eprintln!("Error fetching PCK CRL - {:?}", pcs_response.response_code);
@@ -136,7 +139,10 @@ pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<(V
             .header_map
             .remove(TCB_INFO_ISSUER_CHAIN)
             .ok_or_else(|| anyhow!("Missing TCB info issuer chain header"))?;
-        Some((pcs_response.data, issuer_chain))
+        Some((
+            pcs_response.data,
+            percent_decode_str(&issuer_chain).decode_utf8()?.to_string(),
+        ))
     } else if pcs_response.response_code == 404 {
         // Ignore 404 errors
         None

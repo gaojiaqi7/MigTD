@@ -9,8 +9,8 @@ pub use der::asn1::{
     PrintableString, PrintableStringRef, SequenceOf, SetOfVec, UintRef, UtcTime, Utf8StringRef,
 };
 pub use der::{
-    Choice, Decode, DerOrd, Encode, Error as DerError, Header, Reader, Sequence, Tag, TagNumber,
-    Tagged,
+    Choice, Decode, DerOrd, Encode, Error as DerError, Header, Reader, Result as DerResult,
+    Sequence, Tag, TagNumber, Tagged,
 };
 use der::{ErrorKind, TagMode};
 
@@ -447,6 +447,48 @@ impl<'a> Extension<'a> {
         Ok(Self {
             extn_id,
             critical,
+            extn_value,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Sequence)]
+pub struct OwnedExtension {
+    pub extn_id: ObjectIdentifier,
+    pub critical: Option<bool>, // ASN.1 BOOLEAN.
+    pub extn_value: Option<OctetString>,
+}
+
+impl OwnedExtension {
+    pub fn new(
+        extn_id: ObjectIdentifier,
+        critical: Option<bool>,
+        extn_value: Option<Vec<u8>>,
+    ) -> Result<Self, DerError> {
+        let extn_value = if let Some(extn_value) = extn_value {
+            Some(OctetString::new(extn_value)?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            extn_id,
+            critical,
+            extn_value,
+        })
+    }
+
+    /// Convert to a borrowed Extension for compatibility
+    pub fn as_extension(&self) -> Result<Extension<'_>, DerError> {
+        let extn_value = if let Some(ref owned_value) = self.extn_value {
+            Some(OctetStringRef::new(owned_value.as_bytes())?)
+        } else {
+            None
+        };
+
+        Ok(Extension {
+            extn_id: self.extn_id,
+            critical: self.critical,
             extn_value,
         })
     }

@@ -51,7 +51,7 @@ impl Collateral {
         Ok(Collateral {
             major_version: 1,
             minor_version: 0,
-            tee_type: 1,
+            tee_type: 0x81,
             pck_crl_issuer_chain,
             root_ca_crl,
             pck_crl,

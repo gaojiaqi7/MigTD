@@ -37,6 +37,34 @@ pub(crate) enum AttestLibError {
     InvalidRtmrIndex = 0x000b,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TeeQuoteCollateral {
+    pub version: CollateralVersion,
+    pub tee_type: u32,
+    pub pck_crl_issuer_chain: *mut ::core::ffi::c_char,
+    pub pck_crl_issuer_chain_size: u32,
+    pub root_ca_crl: *mut ::core::ffi::c_char,
+    pub root_ca_crl_size: u32,
+    pub pck_crl: *mut ::core::ffi::c_char,
+    pub pck_crl_size: u32,
+    pub tcb_info_issuer_chain: *mut ::core::ffi::c_char,
+    pub tcb_info_issuer_chain_size: u32,
+    pub tcb_info: *mut ::core::ffi::c_char,
+    pub tcb_info_size: u32,
+    pub qe_identity_issuer_chain: *mut ::core::ffi::c_char,
+    pub qe_identity_issuer_chain_size: u32,
+    pub qe_identity: *mut ::core::ffi::c_char,
+    pub qe_identity_size: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct CollateralVersion {
+    pub major_version: u16,
+    pub minor_version: u16,
+}
+
 #[cfg(not(feature = "test"))]
 mod attest_lib_binding {
     use super::*;
@@ -81,6 +109,7 @@ mod attest_lib_binding {
             quote_size: u32,
             root_pub_key: *const ::core::ffi::c_void,
             root_pub_key_size: u32,
+            p_collateral: *const TeeQuoteCollateral,
             p_tdx_report_verify: *mut ::core::ffi::c_void,
             p_tdx_report_verify_size: *mut u32,
         ) -> AttestLibError;
@@ -122,6 +151,7 @@ mod null_binding {
         _quote_size: u32,
         _root_pub_key: *const ::core::ffi::c_void,
         _root_pub_key_size: u32,
+        _p_collateral: *const TeeQuoteCollateral,
         _p_tdx_report_verify: *mut ::core::ffi::c_void,
         _p_tdx_report_verify_size: *mut u32,
     ) -> AttestLibError {
