@@ -104,6 +104,7 @@ fn get_ccel() -> Option<&'static Ccel> {
 pub fn write_tagged_event_log(
     event_log: &mut [u8],
     mr_index: u32,
+    data_to_hash: &[u8],
     tagged_event_id: u32,
     tagged_event_data: &[u8],
 ) -> Result<usize> {
