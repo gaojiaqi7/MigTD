@@ -191,6 +191,8 @@ mod verify {
         cert: &[u8],
         _quote_local: &[u8],
     ) -> core::result::Result<(), CryptoError> {
+        use log::info;
+
         let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
 
         let extensions = cert
@@ -199,6 +201,7 @@ mod verify {
             .as_ref()
             .ok_or(CryptoError::ParseCertificate)?;
 
+        info!("check_migtd_eku\n");
         // Check if extensions contain `MIGTD_EXTENDED_KEY_USAGE`
         check_migtd_eku(extensions)?;
         // Parse out quote, event log and policy from certificate extensions
@@ -209,11 +212,13 @@ mod verify {
         let policy = find_extension(extensions, &MIGTD_EXTENDED_KEY_USAGE)
             .ok_or(CryptoError::ParseCertificate)?;
 
+        info!("found all the required extensions\n");
         // MigTD-src acts as TLS client
         let policy_check_result =
             mig_policy::authenticate_remote(is_client, quote_report, policy, event_log);
 
         if let Err(e) = &policy_check_result {
+            info!("policy_check_result: {:x?}\n", e);
             log::error!("Policy check failed, below is the detail information:\n");
             log::error!("{:x?}\n", e);
         }
@@ -225,6 +230,7 @@ mod verify {
             _ => CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string()),
         })?;
 
+        info!("policy_check_result ok\n");
         verify_signature(&cert, suppl_data.as_slice())
     }
 

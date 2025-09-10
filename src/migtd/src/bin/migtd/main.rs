@@ -11,6 +11,8 @@ use core::future::poll_fn;
 use core::task::Poll;
 
 use log::info;
+use migtd::config::MIGTD_POLICY_FFS_GUID;
+use migtd::config::MIGTD_ROOT_CA_FFS_GUID;
 use migtd::event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT;
 use migtd::migration::data::MigrationInformation;
 use migtd::migration::session::*;
@@ -96,6 +98,7 @@ fn measure_test_feature(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_TEST_FEATURE,
+        TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
         TAGGED_EVENT_ID_TEST,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     )
@@ -107,22 +110,31 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(event_log, MR_INDEX_POLICY, TAGGED_EVENT_ID_POLICY, policy)
-        .expect("Failed to log migration policy");
+    event_log::write_tagged_event_log(
+        event_log,
+        MR_INDEX_POLICY,
+        policy,
+        TAGGED_EVENT_ID_POLICY,
+        MIGTD_POLICY_FFS_GUID.as_bytes(),
+    )
+    .expect("Failed to log migration policy");
 }
 
 #[cfg(feature = "policy_v2")]
 fn get_policy_signer_and_measure(event_log: &mut [u8]) {
     // Read policy issuer chain from CFV
-    let policy =
+
+    use migtd::config::MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID;
+    let policy_issuer_chain =
         config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
 
     // Measure and extend the policy issuer chain to RTMR
     event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_SIGNER_POLICY,
+        policy_issuer_chain,
         TAGGED_EVENT_ID_SIGNER_POLICY,
-        policy,
+        MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID.as_bytes(),
     )
     .expect("Failed to log policy issuer chain");
 }
@@ -134,8 +146,9 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_ROOT_CA,
-        TAGGED_EVENT_ID_ROOT_CA,
         root_ca,
+        TAGGED_EVENT_ID_ROOT_CA,
+        MIGTD_ROOT_CA_FFS_GUID.as_bytes(),
     )
     .expect("Failed to log SGX root CA\n");
 
