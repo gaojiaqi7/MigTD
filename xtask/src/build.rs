@@ -23,6 +23,9 @@ lazy_static! {
     static ref SHIM_FOLDER: PathBuf = PROJECT_ROOT.join("deps/td-shim");
     static ref DEFAULT_OUTPUT: PathBuf = PROJECT_ROOT.join("target");
     static ref DEFAULT_POLICY: PathBuf = PROJECT_ROOT.join("config/policy_production_fmspc.json");
+    static ref DEFAULT_POLICY_V2: PathBuf = PROJECT_ROOT.join("config/policy_v2.json");
+    static ref DEFAULT_POLICY_ISSUER_CHAIN: PathBuf =
+        PROJECT_ROOT.join("config/policy_issuer_chain.pem");
     static ref DEFAULT_CA: PathBuf =
         PROJECT_ROOT.join("config/Intel_SGX_Provisioning_Certification_RootCA.cer");
     static ref DEFAULT_METADATA: PathBuf = PROJECT_ROOT.join("config/metadata.json");
@@ -72,6 +75,12 @@ pub(crate) struct BuildArgs {
     /// MMIO space layout configuration for migtd
     #[clap(long)]
     mmio_config: Option<PathBuf>,
+    /// Use migration policy v2
+    #[clap(long)]
+    policy_v2: bool,
+    /// Issuer chain of migration policy v2
+    #[clap(long)]
+    policy_issuer_chain: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -224,7 +233,7 @@ impl BuildArgs {
         sh.set_var("AR", "llvm-ar");
 
         sh.change_dir(SHIM_FOLDER.as_path());
-        cmd!(
+        let cmd = cmd!(
             sh,
             "cargo run -p td-shim-tools --bin td-shim-enroll --features=enroller"
         )
@@ -235,9 +244,18 @@ impl BuildArgs {
             self.policy()?.to_str().unwrap(),
             "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
             self.root_ca()?.to_str().unwrap(),
-        ])
-        .args(&["-o", bin.to_str().unwrap()])
-        .run()?;
+        ]);
+
+        let cmd = if self.policy_v2 {
+            cmd.args(&[
+                "B3C1DCFE-6BEF-449F-A183-63A84EA1E0B4",
+                self.policy_issuer_chain()?.to_str().unwrap(),
+            ])
+        } else {
+            cmd
+        };
+
+        cmd.args(&["-o", bin.to_str().unwrap()]).run()?;
 
         Ok(())
     }
@@ -271,6 +289,10 @@ impl BuildArgs {
             } else {
                 features.push_str(MIGTD_DEFAULT_FEATURES);
             }
+        }
+
+        if self.policy_v2 {
+            features.push_str(",policy_v2");
         }
 
         if let Some(selected) = &self.features {
@@ -310,7 +332,19 @@ impl BuildArgs {
     }
 
     fn policy(&self) -> Result<PathBuf> {
-        let path = self.policy.as_ref().unwrap_or(&DEFAULT_POLICY);
+        let path = self.policy.as_ref().unwrap_or(if self.policy_v2 {
+            &DEFAULT_POLICY_V2
+        } else {
+            &DEFAULT_POLICY
+        });
+        fs::canonicalize(path).map_err(|e| e.into())
+    }
+
+    fn policy_issuer_chain(&self) -> Result<PathBuf> {
+        let path = self
+            .policy_issuer_chain
+            .as_ref()
+            .unwrap_or(&DEFAULT_POLICY_ISSUER_CHAIN);
         fs::canonicalize(path).map_err(|e| e.into())
     }
 
