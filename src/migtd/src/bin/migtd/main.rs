@@ -169,7 +169,7 @@ fn initialize_policy() -> String {
 
 fn handle_pre_mig() {
     #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
-    const MAX_CONCURRENCY_REQUESTS: usize = 16;
+    const MAX_CONCURRENCY_REQUESTS: usize = 12;
     #[cfg(not(any(feature = "vmcall-interrupt", feature = "vmcall-raw")))]
     const MAX_CONCURRENCY_REQUESTS: usize = 1;
 
