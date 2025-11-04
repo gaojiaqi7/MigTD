@@ -31,7 +31,9 @@ const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub extern "C" fn main() {
     #[cfg(feature = "test_stack_size")]
     {
-        td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, 0xd000);
+        use migtd::STACK_SIZE;
+
+        td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, STACK_SIZE - 0x100000);
     }
     runtime_main()
 }
@@ -258,6 +260,8 @@ fn handle_pre_mig() {
                         }
                     }
                 }
+                #[cfg(any(feature = "test_stack_size", feature = "test_heap_size"))]
+                test_memory();
             });
         }
         sleep();
