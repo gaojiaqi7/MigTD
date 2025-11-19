@@ -94,7 +94,7 @@ impl<'a> Certificate<'a> {
         algorithm: AlgorithmIdentifier<'a>,
         public_key: &'a [u8],
     ) -> Result<Self, DerError> {
-        let version = Version(UintRef::new(&[2])?);
+        let version = Some(Version(UintRef::new(&[2])?));
         let serial_number = UintRef::new(&[1])?;
 
         let mut country_name = SetOfVec::new();
@@ -181,7 +181,7 @@ impl<'a> Certificate<'a> {
 // }
 #[derive(Clone, Sequence)]
 pub struct TBSCertificate<'a> {
-    pub version: Version<'a>,
+    pub version: Option<Version<'a>>,
     pub serial_number: UintRef<'a>, // ASN.1 INTEGER
     pub signature: AlgorithmIdentifier<'a>,
     pub issuer: Vec<SetOfVec<DistinguishedName<'a>>>,
