@@ -6,6 +6,9 @@ pub mod data;
 pub mod event;
 pub mod logging;
 #[cfg(feature = "main")]
+pub mod rebinding;
+pub mod servtd_ext;
+#[cfg(feature = "main")]
 pub mod session;
 
 use crate::driver::ticks::TimeoutError;
@@ -216,7 +219,8 @@ impl From<RatlsError> for MigrationResult {
             RatlsError::Crypto(_)
             | RatlsError::X509(_)
             | RatlsError::InvalidEventlog
-            | RatlsError::InvalidPolicy => MigrationResult::SecureSessionError,
+            | RatlsError::InvalidPolicy
+            | RatlsError::GenerateCertificate => MigrationResult::SecureSessionError,
             RatlsError::TdxModule(_) => MigrationResult::TdxModuleError,
             RatlsError::GetQuote | RatlsError::VerifyQuote => {
                 MigrationResult::MutualAttestationError
