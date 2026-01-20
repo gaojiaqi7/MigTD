@@ -6,6 +6,8 @@
 use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 #[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::pre_session_data_exchange;
+#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+use crate::migration::rebinding::RebindingInfo;
 use crate::migration::transport::setup_transport;
 use crate::migration::transport::shutdown_transport;
 use crate::migration::transport::TransportType;
@@ -77,6 +79,7 @@ const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
 #[derive(Debug, PartialEq, Eq)]
 pub enum DataStatusOperation {
     StartMigration = 1,
+    StartRebinding = 2,
     GetReportData = 3,
     EnableLogArea = 4,
 }
@@ -207,7 +210,7 @@ pub fn query() -> Result<()> {
 }
 
 #[cfg(feature = "vmcall-raw")]
-fn process_buffer(buffer: &mut [u8]) -> RequestDataBufferHeader {
+fn process_buffer(buffer: &[u8]) -> RequestDataBufferHeader {
     let length = size_of::<RequestDataBufferHeader>();
     let mut outputbuffer = RequestDataBufferHeader {
         datastatus: 0,
@@ -230,7 +233,7 @@ fn process_buffer(buffer: &mut [u8]) -> RequestDataBufferHeader {
         );
         return outputbuffer;
     }
-    let (header, _payload_buffer) = buffer.split_at_mut(length); // Split at 12th byte
+    let (header, _payload_buffer) = buffer.split_at(length); // Split at 12th byte
 
     outputbuffer = RequestDataBufferHeader {
         datastatus: u64::from_le_bytes(header[0..8].try_into().unwrap()),
@@ -252,17 +255,19 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         MigrationResult::OutOfResource
     })?;
 
-    let data_buffer = data_buffer.as_mut_bytes();
+    let shared_data_buffer = data_buffer.as_mut_bytes();
 
-    data_buffer[0..reqbufferhdrlen].copy_from_slice(&reqbufferhdr.as_bytes());
+    shared_data_buffer[0..reqbufferhdrlen].copy_from_slice(&reqbufferhdr.as_bytes());
 
-    tdx::tdvmcall_migtd_waitforrequest(data_buffer, event::VMCALL_SERVICE_VECTOR).map_err(|e| {
-        log::error!(
-            "wait_for_request: tdvmcall_migtd_waitforrequest failure {:?}\n",
+    tdx::tdvmcall_migtd_waitforrequest(shared_data_buffer, event::VMCALL_SERVICE_VECTOR).map_err(
+        |e| {
+            log::error!(
+                "wait_for_request: tdvmcall_migtd_waitforrequest failure {:?}\n",
+                e
+            );
             e
-        );
-        e
-    })?;
+        },
+    )?;
 
     poll_fn(|_cx| {
         if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
@@ -270,6 +275,13 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         } else {
             return Poll::Pending;
         }
+
+        let data_buffer = if let Some(private_buffer) = data_buffer.copy_to_private_shadow() {
+            private_buffer
+        } else {
+            log::error!("wait_for_request: copy_to_private_shadow failure\n");
+            return Poll::Pending
+        };
 
         reqbufferhdr = process_buffer(data_buffer);
         let data_status = reqbufferhdr.datastatus;
@@ -321,6 +333,38 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             } else {
                 REQUESTS.lock().insert(mig_request_id);
                 Poll::Ready(Ok(WaitForRequestResponse::StartMigration(wfr_info)))
+            }
+        } else if operation == DataStatusOperation::StartRebinding as u8 {
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            match RebindingInfo::read_from_bytes(&data_buffer[reqbufferhdrlen..]) {
+                Some(rebinding_info) => {
+                    VMCALL_MIG_REPORTSTATUS_FLAGS
+                        .lock()
+                        .insert(rebinding_info.mig_request_id, AtomicBool::new(false));
+
+                    if REQUESTS.lock().contains(&rebinding_info.mig_request_id) {
+                        Poll::Pending
+                    } else {
+                        REQUESTS.lock().insert(rebinding_info.mig_request_id);
+                        Poll::Ready(Ok(WaitForRequestResponse::StartRebinding(rebinding_info)))
+                    }
+                }
+                None => {
+                    if data_length >= size_of::<u64>() as u32 {
+                        let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                        let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+                        entrylog(&format!("wait_for_request: StartRebinding operation incorrect data received\n").into_bytes(), Level::Debug, mig_request_id);
+                    } else {
+                        entrylog(&format!("wait_for_request: StartRebinding operation incorrect data received\n").into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                    }
+                    log::debug!("wait_for_request: StartRebinding operation incorrect data received\n");
+                    Poll::Pending
+                }
+            }
+            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
+            {
+                log::debug!("wait_for_request: invalid operation StartRebinding received\n");
+                Poll::Pending
             }
         } else if operation == DataStatusOperation::GetReportData as u8 {
             let mut reportdata: [u8; 64] = [0; 64];

@@ -460,6 +460,60 @@ fn handle_pre_mig() {
                             log::trace!("ReportStatus for key exchange completed for wfr_info.mig_info.mig_request_id = {}\n", wfr_info.mig_info.mig_request_id);
                             REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
                         }
+                        #[cfg(feature = "policy_v2")]
+                        WaitForRequestResponse::StartRebinding(rebinding_info) => {
+                            use migtd::migration::rebinding::start_rebinding;
+
+                            let status = start_rebinding(&rebinding_info, &mut data)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+                            if status == MigrationResult::Success {
+                                entrylog(
+                                    &format!("Successfully completed rebinding\n").into_bytes(),
+                                    Level::Trace,
+                                    rebinding_info.mig_request_id,
+                                );
+                                log::trace!(
+                                    "Successfully completed rebinding for mig_request_id = {}\n",
+                                    rebinding_info.mig_request_id
+                                );
+                            } else {
+                                entrylog(
+                                    &format!(
+                                        "Failure during rebinding, status code: {:x}\n",
+                                        status.clone() as u8
+                                    )
+                                    .into_bytes(),
+                                    Level::Error,
+                                    rebinding_info.mig_request_id,
+                                );
+                                log::error!("Failure during rebinding for mig_request_id = {}, status code: {:x}\n", rebinding_info.mig_request_id, status.clone() as u8);
+                            }
+                            let _ = report_status(
+                                status as u8,
+                                rebinding_info.mig_request_id,
+                                &data,
+                            )
+                            .await
+                            .map_err(|e| {
+                                log::error!(
+                                    "Failed to report status for StartRebinding mig_request_id {}: {:?}\n",
+                                    rebinding_info.mig_request_id,
+                                    e
+                                );
+                            });
+                            entrylog(
+                                &format!("ReportStatus for rebinding completed\n").into_bytes(),
+                                Level::Trace,
+                                rebinding_info.mig_request_id,
+                            );
+                            log::trace!(
+                                "ReportStatus for rebinding completed for mig_request_id = {}\n",
+                                rebinding_info.mig_request_id
+                            );
+                            REQUESTS.lock().remove(&rebinding_info.mig_request_id);
+                        }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
                             let status = get_tdreport(
                                 &wfr_info.reportdata,
