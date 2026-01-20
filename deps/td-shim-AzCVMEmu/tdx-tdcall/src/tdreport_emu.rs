@@ -494,7 +494,7 @@ fn create_td_report_from_file(quote_file_path: String) -> tdx::TdReport {
             mrseam: report_body.mr_seam,
             mrsigner_seam: report_body.mrsigner_seam,
             attributes: report_body.seam_attributes,
-            reserved: [0u8; 111],
+            reserved: [0u8; 95],
         },
         reserved: [0u8; 17],
         td_info: TdInfo {
