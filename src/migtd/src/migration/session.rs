@@ -5,9 +5,15 @@
 #[cfg(feature = "vmcall-raw")]
 use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 #[cfg(feature = "policy_v2")]
-use crate::migration::pre_session_data::pre_session_data_exchange;
+use crate::migration::pre_session_data::{
+    dest_pre_session_data_exchange, source_pre_session_data_exchange,
+};
+#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+use crate::migration::rebinding::InitData;
 #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
 use crate::migration::rebinding::RebindingInfo;
+#[cfg(feature = "policy_v2")]
+use crate::migration::servtd_ext::read_servtd_ext;
 use crate::migration::transport::setup_transport;
 use crate::migration::transport::shutdown_transport;
 use crate::migration::transport::TransportType;
@@ -298,41 +304,31 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
 
         let operation: u8 = data_status_bytes[1];
         if operation == DataStatusOperation::StartMigration as u8 {
-            // data_length should be MigtdMigrationInformation
-            let expected_datalength = size_of::<MigtdMigrationInformation>();
-            if data_length != expected_datalength as u32 {
-                if data_length >= size_of::<u64>() as u32 {
-                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, mig_request_id);
-                } else {
-                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+            match MigtdMigrationInformation::read_from_bytes(&data_buffer[reqbufferhdrlen..]) {
+                Some(wfr_info) => {
+                    VMCALL_MIG_REPORTSTATUS_FLAGS
+                        .lock()
+                        .insert(wfr_info.mig_request_id, AtomicBool::new(false));
+
+                    if REQUESTS.lock().contains(&wfr_info.mig_request_id) {
+                        Poll::Pending
+                    } else {
+                        REQUESTS.lock().insert(wfr_info.mig_request_id);
+                        let wfr_info = MigrationInformation { mig_info: wfr_info };
+                        Poll::Ready(Ok(WaitForRequestResponse::StartMigration(wfr_info)))
+                    }
                 }
-                log::debug!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                return Poll::Pending;
-            }
-            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-            let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-
-            VMCALL_MIG_REPORTSTATUS_FLAGS
-                .lock()
-                .insert(mig_request_id, AtomicBool::new(false));
-
-            let wfr_info = MigtdMigrationInformation {
-                mig_request_id,
-                migration_source: slice[8],
-                _pad: slice[9..16].try_into().unwrap(),
-                target_td_uuid: parse_uuid(&slice[16..48]),
-                binding_handle: u64::from_le_bytes(slice[48..56].try_into().unwrap()),
-            };
-
-            let wfr_info = MigrationInformation { mig_info: wfr_info };
-
-            if REQUESTS.lock().contains(&mig_request_id) {
-                Poll::Pending
-            } else {
-                REQUESTS.lock().insert(mig_request_id);
-                Poll::Ready(Ok(WaitForRequestResponse::StartMigration(wfr_info)))
+                None => {
+                    if data_length >= size_of::<u64>() as u32 {
+                        let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                        let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+                        entrylog(&format!("wait_for_request: StartMigration operation incorrect data received\n").into_bytes(), Level::Debug, mig_request_id);
+                    } else {
+                        entrylog(&format!("wait_for_request: StartMigration operation incorrect data received\n").into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                    }
+                    log::debug!("wait_for_request: StartMigration operation incorrect data received\n");
+                    Poll::Pending
+                }
             }
         } else if operation == DataStatusOperation::StartRebinding as u8 {
             #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
@@ -774,15 +770,22 @@ async fn migration_src_exchange_msk(
     data: &mut Vec<u8>,
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
+    #[cfg(feature = "policy_v2")] init_data: &InitData,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+
+    let servtd_ext = read_servtd_ext(info.mig_info.binding_handle, &info.mig_info.target_td_uuid)?;
 
     // TLS client
     let mut ratls_client = ratls::client(
         transport,
         #[cfg(feature = "policy_v2")]
         remote_policy,
+        #[cfg(feature = "policy_v2")]
+        &servtd_ext,
+        #[cfg(feature = "policy_v2")]
+        init_data,
         #[cfg(feature = "vmcall-raw")]
         data,
     )
@@ -1020,30 +1023,6 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
-    #[cfg(feature = "policy_v2")]
-    let policy = crate::config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    #[cfg(feature = "policy_v2")]
-    let remote_policy = Box::pin(with_timeout(
-        PRE_SESSION_TIMEOUT,
-        pre_session_data_exchange(&mut transport, policy),
-    ))
-    .await
-    .map_err(|e| {
-        log::error!(
-            "exchange_msk: pre_session_data_exchange timeout error: {:?}\n",
-            e
-        );
-        e
-    })?
-    .map_err(|e| {
-        log::error!("exchange_msk: pre_session_data_exchange error: {:?}\n", e);
-        e
-    })?;
 
     #[cfg(not(feature = "spdm_attestation"))]
     {
@@ -1056,6 +1035,34 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
 
         // Establish TLS layer connection and negotiate the MSK
         if info.is_src() {
+            let local_data = InitData::get_from_local().ok_or(MigrationResult::InvalidParameter)?;
+            let init_data = info
+                .mig_info
+                .init_data
+                .as_ref()
+                .or(Some(&local_data))
+                .ok_or(MigrationResult::InvalidParameter)?;
+            #[cfg(feature = "policy_v2")]
+            let remote_policy = Box::pin(with_timeout(
+                PRE_SESSION_TIMEOUT,
+                source_pre_session_data_exchange(&mut transport, &init_data.init_policy),
+            ))
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "exchange_msk: source_pre_session_data_exchange timeout error: {:?}\n",
+                    e
+                );
+                e
+            })?
+            .map_err(|e| {
+                log::error!(
+                    "exchange_msk: source_pre_session_data_exchange error: {:?}\n",
+                    e
+                );
+                e
+            })?;
+
             migration_src_exchange_msk(
                 transport,
                 info,
@@ -1063,10 +1070,33 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
                 &exchange_information,
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]
+                &init_data,
+                #[cfg(feature = "policy_v2")]
                 remote_policy,
             )
             .await?;
         } else {
+            #[cfg(feature = "policy_v2")]
+            let remote_policy = Box::pin(with_timeout(
+                PRE_SESSION_TIMEOUT,
+                dest_pre_session_data_exchange(&mut transport),
+            ))
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "exchange_msk: dest_pre_session_data_exchange timeout error: {:?}\n",
+                    e
+                );
+                e
+            })?
+            .map_err(|e| {
+                log::error!(
+                    "exchange_msk: dest_pre_session_data_exchange error: {:?}\n",
+                    e
+                );
+                e
+            })?;
+
             migration_dst_exchange_msk(
                 transport,
                 info,

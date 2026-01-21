@@ -17,9 +17,9 @@ use crypto::{
 use tdx_tdcall::tdreport::TdxReport;
 
 use super::*;
-use crate::event_log::get_event_log;
 #[cfg(feature = "policy_v2")]
 use crate::{config::get_policy, migration::servtd_ext::ServtdExt};
+use crate::{event_log::get_event_log, migration::rebinding::InitData};
 use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
@@ -127,6 +127,8 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
 pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     remote_policy: Vec<u8>,
+    servtd_ext: &ServtdExt,
+    init_data: &InitData,
     #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
@@ -136,10 +138,11 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
         );
         e
     })?;
-    let (certs, _quote) = create_certificate_for_client(&signing_key).map_err(|e| {
-        log::error!("client policy_v2 gen_cert() failed with error {:?}\n", e);
-        e
-    })?;
+    let (certs, _quote) = create_certificate_for_client(&signing_key, servtd_ext, init_data)
+        .map_err(|e| {
+            log::error!("client policy_v2 gen_cert() failed with error {:?}\n", e);
+            e
+        })?;
     let certs = vec![certs];
 
     // Client verifies certificate of server
@@ -346,7 +349,11 @@ fn create_certificate_for_server(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
     Ok((x509_cert_der, quote))
 }
 
-fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
+fn create_certificate_for_client(
+    signing_key: &EcdsaPk,
+    servtd_ext: &ServtdExt,
+    init_data: &InitData,
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let pub_key = signing_key.public_key().map_err(|e| {
         log::error!(
             "gen_cert signing_key.public_key() failed with error {:?}\n",
@@ -399,6 +406,9 @@ fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
             e
         })?;
 
+    #[cfg(feature = "policy_v2")]
+    let init_policy_hash = digest_sha384(&init_data.init_policy)?;
+
     // If policy_v2 feature is enabled, add policy extension
     #[cfg(feature = "policy_v2")]
     let x509_builder = x509_builder
@@ -416,6 +426,90 @@ fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
         .map_err(|e| {
             log::error!(
                 "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
+                e
+            );
+            e
+        })?
+        .add_extension(
+            Extension::new(
+                EXTNID_MIGTD_SERVTD_EXT,
+                Some(false),
+                Some(servtd_ext.as_bytes()),
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    e
+                );
+                e
+            })?,
+        )
+        .map_err(|e| {
+            log::error!(
+                "gen_cert policy_v2 add_extension for servtd_ext failed with error {:?}.\n",
+                e
+            );
+            e
+        })?
+        .add_extension(
+            Extension::new(
+                EXTNID_MIGTD_TDREPORT_INIT,
+                Some(false),
+                Some(&init_data.init_report),
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    e
+                );
+                e
+            })?,
+        )
+        .map_err(|e| {
+            log::error!(
+                "gen_cert policy_v2 add_extension for tdreport init failed with error {:?}.\n",
+                e
+            );
+            e
+        })?
+        .add_extension(
+            Extension::new(
+                EXTNID_MIGTD_EVENT_LOG_INIT,
+                Some(false),
+                Some(&init_data.init_event_log),
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    e
+                );
+                e
+            })?,
+        )
+        .map_err(|e| {
+            log::error!(
+                "gen_cert policy_v2 add_extension for event log init failed with error {:?}.\n",
+                e
+            );
+            e
+        })?
+        .add_extension(
+            Extension::new(
+                EXTNID_MIGTD_INIT_POLICY_HASH,
+                Some(false),
+                Some(&init_policy_hash),
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    e
+                );
+                e
+            })?,
+        )
+        .map_err(|e| {
+            log::error!(
+                "gen_cert policy_v2 add_extension for init policy hash failed with error {:?}.\n",
                 e
             );
             e
@@ -917,7 +1011,7 @@ mod verify {
     pub fn verify_peer_cert(
         is_client: bool,
         cert: &[u8],
-        policy: &[u8],
+        pre_session_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
         let cert = Certificate::from_der(cert).map_err(|_| {
             log::error!("Failed to parse certificate from DER.\n");
@@ -949,16 +1043,84 @@ mod verify {
                 CryptoError::ParseCertificate
             })?;
 
-        let exact_policy_hash = digest_sha384(policy)?;
+        let remote_policy_size = u32::from_le_bytes(
+            pre_session_data
+                .get(..4)
+                .ok_or(CryptoError::TlsVerifyPeerCert(
+                    INVALID_MIG_POLICY_ERROR.to_string(),
+                ))?
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let remote_policy = pre_session_data.get(4..4 + remote_policy_size).ok_or(
+            CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string()),
+        )?;
+
+        let exact_policy_hash = digest_sha384(remote_policy)?;
         if expected_policy_hash != exact_policy_hash.as_slice() {
             log::error!("Invalid migration policy.\n");
             return Err(CryptoError::TlsVerifyPeerCert(
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
         }
+
         // MigTD-src acts as TLS client
-        let policy_check_result =
-            mig_policy::authenticate_remote(is_client, quote_report, policy, event_log);
+        let policy_check_result = if is_client {
+            mig_policy::authenticate_migration_dest(quote_report, remote_policy, event_log)
+        } else {
+            let init_td_report = find_extension(extensions, &EXTNID_MIGTD_TDREPORT_INIT)
+                .ok_or_else(|| {
+                    log::error!("Failed to find init tdreport extension.\n");
+                    CryptoError::ParseCertificate
+                })?;
+            let init_event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG_INIT)
+                .ok_or_else(|| {
+                    log::error!("Failed to find init event log extension.\n");
+                    CryptoError::ParseCertificate
+                })?;
+            let init_policy_hash = find_extension(extensions, &EXTNID_MIGTD_INIT_POLICY_HASH)
+                .ok_or_else(|| {
+                    log::error!("Failed to find init policy hash extension.\n");
+                    CryptoError::ParseCertificate
+                })?;
+            let servtd_ext =
+                find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
+                    log::error!("Failed to find servtd ext extension.\n");
+                    CryptoError::ParseCertificate
+                })?;
+
+            let init_policy_offset = 4 + remote_policy_size;
+            let init_policy_size = u32::from_le_bytes(
+                pre_session_data
+                    .get(init_policy_offset..4 + init_policy_offset)
+                    .ok_or(CryptoError::TlsVerifyPeerCert(
+                        INVALID_MIG_POLICY_ERROR.to_string(),
+                    ))?
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let init_policy = pre_session_data
+                .get(init_policy_offset + 4..init_policy_offset + 4 + init_policy_size)
+                .ok_or(CryptoError::TlsVerifyPeerCert(
+                    INVALID_MIG_POLICY_ERROR.to_string(),
+                ))?;
+            let exact_init_policy_hash = digest_sha384(init_policy)?;
+            if init_policy_hash != exact_init_policy_hash.as_slice() {
+                log::error!("Invalid init migration policy.\n");
+                return Err(CryptoError::TlsVerifyPeerCert(
+                    INVALID_MIG_POLICY_ERROR.to_string(),
+                ));
+            }
+            mig_policy::authenticate_migration_source(
+                quote_report,
+                remote_policy,
+                event_log,
+                init_policy,
+                init_event_log,
+                init_td_report,
+                servtd_ext,
+            )
+        };
 
         if let Err(e) = &policy_check_result {
             log::error!("Policy check failed, below is the detail information:\n");
